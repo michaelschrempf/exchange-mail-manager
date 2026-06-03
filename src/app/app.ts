@@ -27,8 +27,13 @@ export class App {
   statusMessage = '';
   errorMessage = '';
   isSignedIn = false;
+  isAuthenticating = false;
   isLoading = false;
   isDeleting = false;
+
+  constructor() {
+    void this.restoreSignInState();
+  }
 
   get hasConfiguration(): boolean {
     return this.graphMailService.isConfigured();
@@ -47,20 +52,42 @@ export class App {
   }
 
   async signIn(): Promise<void> {
+    if (this.isAuthenticating) {
+      return;
+    }
+
     this.errorMessage = '';
     this.statusMessage = '';
+    this.isAuthenticating = true;
 
     try {
       this.signedInUser = await this.graphMailService.signIn();
       this.isSignedIn = true;
-      this.statusMessage = `Signed in as ${this.signedInUser}.`;
+      if (this.signedInUser.toLowerCase().startsWith('redirecting')) {
+        this.statusMessage = this.signedInUser;
+      } else {
+        this.statusMessage = `Signed in as ${this.signedInUser}.`;
+      }
     } catch (error) {
-      this.errorMessage = this.toErrorMessage(error);
+      const message = this.toErrorMessage(error);
+      if (message.toLowerCase().startsWith('redirecting')) {
+        this.statusMessage = message;
+      } else {
+        this.errorMessage = message;
+      }
+    } finally {
+      this.isAuthenticating = false;
     }
   }
 
   async signOut(): Promise<void> {
+    if (this.isAuthenticating) {
+      return;
+    }
+
     this.errorMessage = '';
+    this.statusMessage = '';
+    this.isAuthenticating = true;
 
     try {
       await this.graphMailService.signOut();
@@ -70,6 +97,8 @@ export class App {
       this.statusMessage = 'Signed out.';
     } catch (error) {
       this.errorMessage = this.toErrorMessage(error);
+    } finally {
+      this.isAuthenticating = false;
     }
   }
 
@@ -142,7 +171,40 @@ export class App {
     return message.id;
   }
 
+  private async restoreSignInState(): Promise<void> {
+    if (!this.hasConfiguration) {
+      return;
+    }
+
+    try {
+      const username = await this.graphMailService.getSignedInUsername();
+      if (username) {
+        this.signedInUser = username;
+        this.isSignedIn = true;
+        this.statusMessage = `Signed in as ${username}.`;
+      }
+    } catch (error) {
+      this.errorMessage = this.toErrorMessage(error);
+    }
+  }
+
   private toErrorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : 'An unexpected error occurred.';
+    if (error instanceof Error) {
+      if (error.message.includes('interaction_in_progress')) {
+        return 'A Microsoft sign-in window is already open. Complete or close it, then try again.';
+      }
+
+      if (error.message.toLowerCase().includes('popup')) {
+        return 'The Microsoft sign-in popup was blocked or closed. Allow popups for this site and try again.';
+      }
+
+      if (error.message.toLowerCase().startsWith('redirecting')) {
+        return error.message;
+      }
+
+      return error.message;
+    }
+
+    return 'An unexpected error occurred.';
   }
 }

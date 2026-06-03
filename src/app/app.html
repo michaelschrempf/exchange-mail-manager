@@ -15,15 +15,15 @@
         <p>Use a mailbox account that already has access to the Exchange mailbox you want to clean up.</p>
       </div>
       @if (isSignedIn) {
-        <button type="button" class="secondary" (click)="signOut()">Sign out</button>
+        <button type="button" class="secondary" (click)="signOut()" [disabled]="isAuthenticating">Sign out</button>
       } @else {
         <button
           type="button"
           class="primary"
           (click)="signIn()"
-          [disabled]="!hasConfiguration"
+          [disabled]="!hasConfiguration || isAuthenticating"
         >
-          Sign in with Microsoft
+          {{ isAuthenticating ? 'Signing in…' : 'Sign in with Microsoft' }}
         </button>
       }
     </div>

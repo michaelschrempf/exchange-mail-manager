@@ -1,8 +1,8 @@
 import { Injectable } from '@angular/core';
 import type {
-  AuthenticationResult,
-  PopupRequest,
+  EndSessionRequest,
   PublicClientApplication,
+  RedirectRequest,
 } from '@azure/msal-browser';
 
 import { environment } from '../environments/environment';
@@ -32,6 +32,15 @@ export class GraphMailService {
   private readonly authScopes = ['User.Read', 'Mail.ReadWrite'];
   private readonly configuration = environment.azure;
   private msalApp?: PublicClientApplication;
+  private msalAppInitialization?: Promise<PublicClientApplication>;
+  private interactiveAuthRequest?: Promise<unknown>;
+
+  constructor() {
+    // Warm up MSAL early so redirect results are processed as soon as the app boots.
+    if (this.isConfigured()) {
+      void this.getMsalApp();
+    }
+  }
 
   isConfigured(): boolean {
     return [
@@ -46,8 +55,21 @@ export class GraphMailService {
   }
 
   async signIn(): Promise<string> {
-    const result = await this.loginWithPopup();
-    return result.account?.username ?? 'Microsoft account';
+    const app = await this.getMsalApp();
+    const account = app.getActiveAccount() ?? app.getAllAccounts()[0];
+
+    if (account) {
+      app.setActiveAccount(account);
+      return account.username;
+    }
+
+    const redirectRequest: RedirectRequest = {
+      scopes: this.authScopes,
+      redirectUri: this.configuration.redirectUri,
+    };
+
+    await this.runInteractiveAuthRequest(() => app.loginRedirect(redirectRequest));
+    return 'Redirecting to Microsoft sign-in...';
   }
 
   async signOut(): Promise<void> {
@@ -55,8 +77,24 @@ export class GraphMailService {
     const account = app.getActiveAccount() ?? app.getAllAccounts()[0];
 
     if (account) {
-      await app.logoutPopup({ account });
+      const logoutRequest: EndSessionRequest = {
+        account,
+        postLogoutRedirectUri: this.configuration.redirectUri,
+      };
+      await this.runInteractiveAuthRequest(() => app.logoutRedirect(logoutRequest));
     }
+  }
+
+  async getSignedInUsername(): Promise<string> {
+    const app = await this.getMsalApp();
+    const account = app.getActiveAccount() ?? app.getAllAccounts()[0];
+
+    if (!account) {
+      return '';
+    }
+
+    app.setActiveAccount(account);
+    return account.username;
   }
 
   async loadMessagesBySender(senderEmail: string): Promise<MailMessage[]> {
@@ -98,21 +136,18 @@ export class GraphMailService {
     }
   }
 
-  private async loginWithPopup(): Promise<AuthenticationResult> {
-    const app = await this.getMsalApp();
-    const loginRequest: PopupRequest = { scopes: this.authScopes };
-    const result = await app.loginPopup(loginRequest);
-    app.setActiveAccount(result.account);
-    return result;
-  }
-
   private async getAccessToken(): Promise<string> {
     const app = await this.getMsalApp();
     const account = app.getActiveAccount() ?? app.getAllAccounts()[0];
 
     if (!account) {
-      const loginResult = await this.loginWithPopup();
-      return loginResult.accessToken;
+      await this.runInteractiveAuthRequest(() =>
+        app.loginRedirect({
+          scopes: this.authScopes,
+          redirectUri: this.configuration.redirectUri,
+        }),
+      );
+      throw new Error('Redirecting to Microsoft sign-in...');
     }
 
     app.setActiveAccount(account);
@@ -124,12 +159,35 @@ export class GraphMailService {
       });
       return result.accessToken;
     } catch {
-      const result = await app.acquireTokenPopup({
-        account,
-        scopes: this.authScopes,
-      });
-      app.setActiveAccount(result.account);
-      return result.accessToken;
+      await this.runInteractiveAuthRequest(() =>
+        app.acquireTokenRedirect({
+          account,
+          scopes: this.authScopes,
+          redirectUri: this.configuration.redirectUri,
+        }),
+      );
+      throw new Error('Redirecting to Microsoft consent page...');
+    }
+  }
+
+  private async runInteractiveAuthRequest<T>(request: () => Promise<T>): Promise<T> {
+    while (this.interactiveAuthRequest) {
+      try {
+        await this.interactiveAuthRequest;
+      } catch {
+        // Ignore failures from previous attempts and continue with the next request.
+      }
+    }
+
+    const activeRequest = request();
+    this.interactiveAuthRequest = activeRequest;
+
+    try {
+      return await activeRequest;
+    } finally {
+      if (this.interactiveAuthRequest === activeRequest) {
+        this.interactiveAuthRequest = undefined;
+      }
     }
   }
 
@@ -138,28 +196,56 @@ export class GraphMailService {
       throw new Error(this.getConfigurationMessage());
     }
 
-    if (!this.msalApp) {
-      const { PublicClientApplication } = await import('@azure/msal-browser');
+    if (this.msalApp) {
+      return this.msalApp;
+    }
 
-      this.msalApp = new PublicClientApplication({
-        auth: {
-          clientId: this.configuration.clientId,
-          authority: `https://login.microsoftonline.com/${this.configuration.tenantId}`,
-          redirectUri: this.configuration.redirectUri,
-        },
-        cache: {
-          cacheLocation: 'sessionStorage',
-        },
-      });
-      await this.msalApp.initialize();
+    if (!this.msalAppInitialization) {
+      this.msalAppInitialization = this.initializeMsalApp();
+    }
 
-      const account = this.msalApp.getAllAccounts()[0];
-      if (account) {
-        this.msalApp.setActiveAccount(account);
+    try {
+      return await this.msalAppInitialization;
+    } catch (error) {
+      this.msalAppInitialization = undefined;
+      throw error;
+    }
+  }
+
+  private async initializeMsalApp(): Promise<PublicClientApplication> {
+    const { PublicClientApplication } = await import('@azure/msal-browser');
+
+    const app = new PublicClientApplication({
+      auth: {
+        clientId: this.configuration.clientId,
+        authority: `https://login.microsoftonline.com/${this.configuration.tenantId}`,
+        redirectUri: this.configuration.redirectUri,
+      },
+      cache: {
+        cacheLocation: 'sessionStorage',
+      },
+    });
+
+    await app.initialize();
+
+    try {
+      const redirectResult = await app.handleRedirectPromise();
+      if (redirectResult?.account) {
+        app.setActiveAccount(redirectResult.account);
+      }
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('no_token_request_cache_error')) {
+        throw error;
       }
     }
 
-    return this.msalApp;
+    const account = app.getAllAccounts()[0];
+    if (account) {
+      app.setActiveAccount(account);
+    }
+
+    this.msalApp = app;
+    return app;
   }
 
   private async requestGraph<T>(url: string, method = 'GET'): Promise<T> {
