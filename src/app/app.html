@@ -1,0 +1,130 @@
+<main class="shell">
+  <section class="panel hero">
+    <p class="eyebrow">Exchange Mail Manager</p>
+    <h1>Review and delete messages from a sender</h1>
+    <p class="lead">
+      Sign in with Microsoft, enter the sender's email address, review the matching messages in your
+      mailbox, and then confirm deletion.
+    </p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">
+      <div>
+        <h2>1. Connect to Microsoft 365</h2>
+        <p>Use a mailbox account that already has access to the Exchange mailbox you want to clean up.</p>
+      </div>
+      @if (isSignedIn) {
+        <button type="button" class="secondary" (click)="signOut()">Sign out</button>
+      } @else {
+        <button
+          type="button"
+          class="primary"
+          (click)="signIn()"
+          [disabled]="!hasConfiguration"
+        >
+          Sign in with Microsoft
+        </button>
+      }
+    </div>
+
+    @if (!hasConfiguration) {
+      <p class="warning">{{ configurationMessage }}</p>
+    }
+
+    @if (signedInUser) {
+      <p class="success">Connected as {{ signedInUser }}</p>
+    }
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">
+      <div>
+        <h2>2. Find messages by sender</h2>
+        <p>Searches the signed-in mailbox for messages where the sender matches the email address below.</p>
+      </div>
+    </div>
+
+    <form class="search-form" (ngSubmit)="findMessages()">
+      <label for="senderEmail">Sender email address</label>
+      <div class="search-row">
+        <input
+          id="senderEmail"
+          name="senderEmail"
+          type="email"
+          [(ngModel)]="senderEmail"
+          placeholder="sender@example.com"
+          [disabled]="!hasConfiguration || !isSignedIn || isLoading || isDeleting"
+          required
+        />
+        <button
+          type="submit"
+          class="primary"
+          [disabled]="!hasConfiguration || !isSignedIn || isLoading || isDeleting"
+        >
+          {{ isLoading ? 'Loading…' : 'Load messages' }}
+        </button>
+      </div>
+    </form>
+  </section>
+
+  @if (errorMessage) {
+    <section class="panel error-banner" aria-live="assertive">{{ errorMessage }}</section>
+  }
+
+  @if (statusMessage) {
+    <section class="panel success-banner" aria-live="polite">{{ statusMessage }}</section>
+  }
+
+  <section class="panel">
+    <div class="panel-header review-header">
+      <div>
+        <h2>3. Review and confirm deletion</h2>
+        <p>Select the messages you want to delete after reviewing the preview details.</p>
+      </div>
+      <div class="actions">
+        <label class="select-all">
+          <input
+            type="checkbox"
+            [checked]="allSelected"
+            [disabled]="!hasMessages || isDeleting"
+            (change)="toggleAllSelections($any($event.target).checked)"
+          />
+          Select all
+        </label>
+        <button
+          type="button"
+          class="danger"
+          [disabled]="selectedCount === 0 || isDeleting"
+          (click)="deleteSelectedMessages()"
+        >
+          {{ isDeleting ? 'Deleting…' : 'Delete selected messages' }}
+        </button>
+      </div>
+    </div>
+
+    @if (!hasMessages) {
+      <p class="empty-state">No messages loaded yet.</p>
+    } @else {
+      <p class="selection-summary">{{ selectedCount }} of {{ messages.length }} message(s) selected.</p>
+      <ul class="message-list">
+        @for (message of messages; track trackByMessageId($index, message)) {
+          <li class="message-card">
+            <label class="message-select">
+              <input type="checkbox" [(ngModel)]="message.selected" [name]="message.id" [disabled]="isDeleting" />
+              <span>Select</span>
+            </label>
+            <div class="message-body">
+              <div class="message-meta">
+                <h3>{{ message.subject }}</h3>
+                <span>{{ message.receivedDateTime | date: 'medium' }}</span>
+              </div>
+              <p><strong>From:</strong> {{ message.fromName }} ({{ message.fromAddress }})</p>
+              <p>{{ message.bodyPreview }}</p>
+            </div>
+          </li>
+        }
+      </ul>
+    }
+  </section>
+</main>
