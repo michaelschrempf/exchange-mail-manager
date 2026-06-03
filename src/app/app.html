@@ -106,6 +106,19 @@
     @if (!hasMessages) {
       <p class="empty-state">No messages loaded yet.</p>
     } @else {
+      @if (isDeleting) {
+        <div class="delete-progress" role="status" aria-live="polite">
+          <div class="delete-progress-meta">
+            <span>Deleting selected messages...</span>
+            <span>{{ deletionProcessedCount }} / {{ deletionTotalCount }} ({{ deletionProgressPercent }}%)</span>
+          </div>
+          <progress
+            class="delete-progress-bar"
+            [value]="deletionProcessedCount"
+            [max]="deletionTotalCount"
+          ></progress>
+        </div>
+      }
       <p class="selection-summary">{{ selectedCount }} of {{ messages.length }} message(s) selected.</p>
       <ul class="message-list">
         @for (message of messages; track trackByMessageId($index, message)) {

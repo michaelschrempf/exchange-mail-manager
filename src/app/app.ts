@@ -30,6 +30,8 @@ export class App {
   isAuthenticating = false;
   isLoading = false;
   isDeleting = false;
+  deletionProcessedCount = 0;
+  deletionTotalCount = 0;
 
   constructor() {
     void this.restoreSignInState();
@@ -155,9 +157,16 @@ export class App {
     this.errorMessage = '';
     this.statusMessage = '';
     this.isDeleting = true;
+    this.deletionProcessedCount = 0;
+    this.deletionTotalCount = selectedMessages.length;
 
     try {
-      await this.graphMailService.deleteMessages(selectedMessages.map((message) => message.id));
+      await this.graphMailService.deleteMessages(
+        selectedMessages.map((message) => message.id),
+        (processedCount) => {
+          this.deletionProcessedCount = processedCount;
+        },
+      );
       this.messages = this.messages.filter((message) => !message.selected);
       this.statusMessage = `Deleted ${selectedMessages.length} message(s).`;
     } catch (error) {
@@ -165,6 +174,14 @@ export class App {
     } finally {
       this.isDeleting = false;
     }
+  }
+
+  get deletionProgressPercent(): number {
+    if (this.deletionTotalCount === 0) {
+      return 0;
+    }
+
+    return Math.round((this.deletionProcessedCount / this.deletionTotalCount) * 100);
   }
 
   trackByMessageId(_: number, message: SelectableMailMessage): string {

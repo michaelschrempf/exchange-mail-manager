@@ -130,9 +130,13 @@ export class GraphMailService {
     return messages.sort((left, right) => right.receivedDateTime.localeCompare(left.receivedDateTime));
   }
 
-  async deleteMessages(messageIds: string[]): Promise<void> {
+  async deleteMessages(messageIds: string[], onProgress?: (processedCount: number) => void): Promise<void> {
+    let processedCount = 0;
+
     for (const messageId of messageIds) {
       await this.requestGraph<void>(`${this.graphBaseUrl}/me/messages/${encodeURIComponent(messageId)}`, 'DELETE');
+      processedCount += 1;
+      onProgress?.(processedCount);
     }
   }
 
